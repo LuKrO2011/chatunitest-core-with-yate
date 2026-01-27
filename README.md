@@ -2,9 +2,11 @@
 
 This is an attempt to integrate YATE's repairing components into ChatUniTest in order to achieve better results
 
-> Currently, this is a work in progress and SHOULD NOT BE USED
-
 For more information either got to ChatUniTest's default repository or yate-java repository
+
+This repository should be used with the following plugin (custom variation) as it supports YATE's configuration as well.
+
+Below, the original README from ChatUniTest follows.
 
 # :mega: ChatUnitest Core
 
