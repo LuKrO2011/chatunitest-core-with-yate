@@ -1,7 +1,10 @@
 package zju.cst.aces.util.yate;
 
+import com.aallam.openai.api.chat.ChatMessage;
+import com.mkonst.analysis.ClassContainer;
 import com.mkonst.analysis.JavaClassContainer;
 import com.mkonst.helpers.*;
+import com.mkonst.providers.ChatHistoryBuilder;
 import com.mkonst.runners.YateJavaRunner;
 import com.mkonst.types.YateResponse;
 import zju.cst.aces.api.config.Config;
@@ -9,7 +12,12 @@ import zju.cst.aces.api.config.YateConfig;
 import zju.cst.aces.dto.ClassInfo;
 import zju.cst.aces.dto.PromptInfo;
 
+import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 
 public class YateFixer {
     private final Config config;
@@ -35,8 +43,11 @@ public class YateFixer {
         testContainer.setPathsFromCut(cutContainer);
         testContainer.toTestFile();
 
+        // Generate "potential" LLM history (hence the class information is available by YATE)
+        List<ChatMessage> history = generateLLMConversation(classInfo.compilationUnitCode, promptInfo.getUnitTest());
+
         // Create a YateResponse object, to allow YATE to append modifications between LLM-interactions
-        YateResponse yateResponse = new YateResponse(testContainer, new ArrayList<>(), false);
+        YateResponse yateResponse = new YateResponse(testContainer, history, false);
 
         // Initialize a new runner to invoke YATE components
         YateJavaRunner runner = new YateJavaRunner(
@@ -46,20 +57,34 @@ public class YateFixer {
                 config.yate.modelName
         );
 
-        // Invoke YATE's compilation fixing component
-        runner.fixGeneratedTestClass(cutContainer, yateResponse);
-        yateResponse.getTestClassContainer().toTestFile();
-
-        // Invoke YATE's oracle fixing component (if enabled)
-        if (config.yate.useOracleFixing) {
-            runner.fixOraclesInTestClass(yateResponse);
+        try {
+            // Invoke YATE's compilation fixing component
+            runner.fixGeneratedTestClass(cutContainer, yateResponse);
             yateResponse.getTestClassContainer().toTestFile();
+
+            // Invoke YATE's oracle fixing component (if enabled)
+            if (config.yate.useOracleFixing) {
+                runner.fixOraclesInTestClass(yateResponse);
+                yateResponse.getTestClassContainer().toTestFile();
+            }
+        } catch (Exception ex) {
+            // Move generated test class to output directory (if enabled)
+            if (config.yate.outputDirectory != null) {
+                moveGeneratedTestsToOutputDirectory(yateResponse.getTestClassContainer(), promptInfo);
+            }
+
+            yateResponse.setHasChanges(true);
+            return yateResponse;
         }
 
         // Move generated test class to output directory (if enabled)
         if (config.yate.outputDirectory != null) {
-            YateUtils.INSTANCE.moveGeneratedTestClass(yateResponse.getTestClassContainer(), config.yate.outputDirectory);
+            moveGeneratedTestsToOutputDirectory(yateResponse.getTestClassContainer(), promptInfo);
         }
+
+        config.logger.info("YATE COMPILATION FIXING REQUESTS: " + runner.getNrRequests().getCompilationFixing());
+        config.logger.info("YATE ORACLE FIXING REQUESTS: " + runner.getNrRequests().getOracleFixing());
+        runner.resetNrRequests();
 
         // Has Changed flag will hold whether the YateResponse has any failures or not
         yateResponse.setHasChanges(hasFailed(yateResponse));
@@ -80,6 +105,75 @@ public class YateFixer {
             YateConsole.INSTANCE.error(e.getMessage());
 
             return true;
+        }
+    }
+
+    private List<ChatMessage> generateLLMConversation(String classContent, String testClassContent) {
+        ChatHistoryBuilder historyBuilder = new ChatHistoryBuilder();
+        historyBuilder.setSystemPrompt("system");
+
+        // Prepare user prompt
+        HashMap<String, String> userPromptVars = new HashMap<>();
+        userPromptVars.put("CLASS_CONTENT", classContent);
+        historyBuilder.addUserPrompt("ablation_generate_simple", userPromptVars);
+
+        // Prepare assistant response
+        HashMap<String, String> assistantPromptVars = new HashMap<>();
+        assistantPromptVars.put("CODE_LANG", "java");
+        assistantPromptVars.put("RESPONSE", testClassContent);
+
+        historyBuilder.addAssistantPrompt("code_response", assistantPromptVars);
+
+        return historyBuilder.build();
+    }
+
+    private void moveGeneratedTestsToOutputDirectory(ClassContainer classContainer, PromptInfo promptInfo) {
+        if (config.yate.outputDirectory == null) {
+            return;
+        }
+
+        // Default
+        if(!config.phaseType.equals("HITS")) {
+            YateUtils.INSTANCE.moveGeneratedTestClass(classContainer, config.yate.outputDirectory);
+        } else {
+
+            // For HITS make sure that the filename has also the slice number
+            try {
+                String sourcePath = classContainer.getPaths().getTestClass();
+                File sourceFile = new File(sourcePath);
+                String destinationName = sourceFile.getName().replace("Test", "Test_slice" + promptInfo.getSliceNum());
+
+                String directoriesAfterRepository =
+                        classContainer.getPaths()
+                                .getTestClass()
+                                .substring(classContainer.getPaths().getTestClass().indexOf("src/test") + "src/test".length());
+
+                directoriesAfterRepository =
+                        directoriesAfterRepository.substring(
+                                0,
+                                directoriesAfterRepository.indexOf(
+                                        classContainer.getClassName() + classContainer.getLang().getExtension()
+                                )
+                        );
+
+                String newDir = config.yate.outputDirectory + directoriesAfterRepository;
+
+                File targetDir = new File(newDir);
+                File targetFile = new File(targetDir, destinationName);
+
+                // Ensure target directory exists. If not, create the missing directories
+                if (!targetDir.exists()) {
+                    targetDir.mkdirs();
+                }
+
+                // Move the file
+                Files.move(sourceFile.toPath(), targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+                return;
+            } catch (Exception e) {
+                YateConsole.INSTANCE.error("Exception thrown when moving file to directory");
+                e.printStackTrace();
+            }
         }
     }
 }

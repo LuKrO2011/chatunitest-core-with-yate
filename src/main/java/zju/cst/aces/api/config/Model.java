@@ -44,6 +44,22 @@ public enum Model {
             .withFrequencyPenalty(0)
             .withPresencePenalty(0)
             .build()),
+    DEEPSEEK_CHAT("deepseek-chat", new ModelConfig.Builder()
+            .withModelName("deepseek-chat")
+            .withUrl("https://api.deepseek.com/v1/chat/completions")
+            .withContextLength(122880) //120k
+            .withTemperature(0.5)
+            .withFrequencyPenalty(0)
+            .withPresencePenalty(0)
+            .build()),
+    LLAMA_3_3_INSTRUCT("meta-llama/Llama-3.3-70B-Instruct", new ModelConfig.Builder()
+            .withModelName("meta-llama/Llama-3.3-70B-Instruct")
+            .withUrl("https://api.tokenfactory.nebius.com/v1/chat/completions")
+            .withContextLength(122880) //120k
+            .withTemperature(0.5)
+            .withFrequencyPenalty(0)
+            .withPresencePenalty(0)
+            .build()),
     CODE_LLAMA("code-llama", new ModelConfig.Builder()
             .withModelName("code-llama")
             .withUrl(null)

@@ -77,13 +77,15 @@ public class HITSRunner extends MethodRunner {
                     YateFixer yateFixer = new YateFixer(config);
                     YateResponse yateResponse = yateFixer.fixGeneratedTest(fullClassName, classInfo, promptInfo);
 
+                    hasErrors = yateResponse.getHasChanges();
+
                     // Update ChatUniTest's data structure that holds the generated test class content
                     pc.getPromptInfo().setUnitTest(yateResponse.getTestClassContainer().getCompleteContent());
                 }
 
                 exportSliceRecord(pc.getPromptInfo(), classInfo, num, i); //todo 检测是否顺利生成信息
             }
-            return !hasErrors;
+            return hasErrors;
         }
         return true;
     }

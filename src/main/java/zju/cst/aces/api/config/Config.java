@@ -700,9 +700,10 @@ public class Config {
         logger.info(" YATE - Model name >>> " + this.getYate().modelName);
         logger.info(" YATE - Use oracle fixing >>> " + this.getYate().useOracleFixing);
         logger.info(" YATE - Output Directory >>> " + this.getYate().outputDirectory);
+        logger.info(" YATE - Config file >>> " + this.getYate().configPath);
         logger.info(" PhaseType >>> " + this.phaseType);
         try {
-            ConfigYate.initialize("/Users/michael.konstantinou/Projects/chatunitest-maven-plugin-with-yate/.env.chatunitest");
+            ConfigYate.initialize(this.getYate().configPath);
             PromptService.initialize();
             logger.info(" YATE >>> Initialized");
             logger.info("\n===================================================================\n");

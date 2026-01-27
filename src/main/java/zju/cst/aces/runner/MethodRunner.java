@@ -84,6 +84,7 @@ public class MethodRunner extends ClassRunner {
         System.out.println("Trying to fix test using YATE: " + promptInfo.fullTestName);
 
         YateFixer yateFixer = new YateFixer(config);
+
         YateResponse yateResponse = yateFixer.fixGeneratedTest(fullClassName, classInfo, promptInfo);
 
         // Update ChatUniTest's data structure that holds the generated test class content
