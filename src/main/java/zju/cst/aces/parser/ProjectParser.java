@@ -49,7 +49,17 @@ public class ProjectParser {
     public int methodCount = 0;
 
     public ProjectParser(Config config) {
-        this.srcFolderPath = Paths.get(config.getProject().getBasedir().getAbsolutePath(), "src", "main", "java");
+        // Derive the source root from the project's compile source roots rather than assuming a
+        // fixed Maven layout (basedir/src/main/java). ProjectImpl returns MavenProject's compile
+        // source roots (still basedir/src/main/java for a standard Maven project, so behaviour is
+        // unchanged), while Defects4jProject returns the directory exported by
+        // `defects4j export -p dir.src.classes`.
+        List<String> compileSourceRoots = config.getProject().getCompileSourceRoots();
+        if (compileSourceRoots != null && !compileSourceRoots.isEmpty()) {
+            this.srcFolderPath = Paths.get(compileSourceRoots.get(0));
+        } else {
+            this.srcFolderPath = Paths.get(config.getProject().getBasedir().getAbsolutePath(), "src", "main", "java");
+        }
         this.config = config;
         this.outputPath = config.getParseOutput();
         this.parser = config.getParser();

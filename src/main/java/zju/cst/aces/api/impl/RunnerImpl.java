@@ -7,6 +7,7 @@ import zju.cst.aces.prompt.PromptFile;
 import zju.cst.aces.runner.ClassRunner;
 import zju.cst.aces.runner.MethodRunner;
 import zju.cst.aces.runner.solution_runner.ChatTesterRunner;
+import zju.cst.aces.runner.solution_runner.EvoSuiteRunner;
 import zju.cst.aces.runner.solution_runner.HITSRunner;
 
 import java.io.IOException;
@@ -42,6 +43,10 @@ public class RunnerImpl implements Runner {
                 break;
             case "HITS":
                 new HITSRunner(config, fullClassName, methodInfo).start();
+                break;
+            case "EVOSUITE":
+                // Bypass the LLM PhaseImpl pipeline entirely: EvoSuite is not prompt-based.
+                new EvoSuiteRunner(config, fullClassName, methodInfo).start();
                 break;
             default:
                 new MethodRunner(config, fullClassName, methodInfo).start();

@@ -163,6 +163,14 @@ public class Config {
         public int max_coverage_improve_time=maxRounds;
         public int sampleSize = 10;
         public Validator validator;
+        /**
+         * Directory used as the validator's "target" folder (holds the compiled-test / backup
+         * copies made by {@link zju.cst.aces.util.TestCompiler}). Historically hard-coded to
+         * {@code basedir/target} to match the Maven layout. When left {@code null} the legacy
+         * {@code basedir/target} default is used (so the Maven plugin path is unchanged); the
+         * Defects4J driver sets this to a temp build dir so it never writes into the checkout.
+         */
+        public Path validatorTargetPath;
         public String pluginSign;
         public String phaseType; //TODO
         public boolean useSlice;
@@ -208,7 +216,30 @@ public class Config {
             this.counterExamplePath = project.getBasedir().toPath().resolve("smartut-tests");
             this.testOutput = project.getBasedir().toPath().resolve("chatunitest-tests");
             this.validator = new ValidatorImpl(this.testOutput, this.compileOutputPath,
-                    this.project.getBasedir().toPath().resolve("target"), this.classPaths);
+                    resolveValidatorTarget(), this.classPaths);
+        }
+
+        /**
+         * Resolve the validator "target" directory: the explicit {@link #validatorTargetPath} if
+         * set, otherwise the legacy {@code basedir/target} (preserving Maven behaviour).
+         */
+        private Path resolveValidatorTarget() {
+            if (this.validatorTargetPath != null) {
+                return this.validatorTargetPath;
+            }
+            return this.project.getBasedir().toPath().resolve("target");
+        }
+
+        /**
+         * Point the validator at an explicit target directory (used by the headless Defects4J
+         * driver). Rebuilds the validator so ordering relative to {@link #classPaths(List)} is
+         * forgiving as long as this is called after the classpath is known.
+         */
+        public ConfigBuilder validatorTargetPath(Path validatorTargetPath) {
+            this.validatorTargetPath = validatorTargetPath;
+            this.validator = new ValidatorImpl(this.testOutput, this.compileOutputPath,
+                    resolveValidatorTarget(), this.classPaths);
+            return this;
         }
 
         public ConfigBuilder maxThreads(int maxThreads) {
@@ -253,7 +284,7 @@ public class Config {
             this.historyPath = this.tmpOutput.resolve("history" + this.date);
             this.symbolFramePath = this.tmpOutput.resolve("symbolFrames.json");
             this.validator = new ValidatorImpl(this.testOutput, this.compileOutputPath,
-                    this.project.getBasedir().toPath().resolve("target"), this.classPaths);
+                    resolveValidatorTarget(), this.classPaths);
             return this;
         }
         public ConfigBuilder CounterExamplePath(Path counterExamplePath) {
@@ -320,7 +351,7 @@ public class Config {
         public ConfigBuilder classPaths(List<String> classPaths) {
             this.classPaths = classPaths;
             this.validator = new ValidatorImpl(this.testOutput, this.compileOutputPath,
-                    this.project.getBasedir().toPath().resolve("target"), this.classPaths);
+                    resolveValidatorTarget(), this.classPaths);
             return this;
         }
 

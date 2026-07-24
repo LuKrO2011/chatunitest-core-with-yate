@@ -4,6 +4,7 @@ import zju.cst.aces.dto.ClassInfo;
 import zju.cst.aces.dto.MethodInfo;
 import zju.cst.aces.api.config.Config;
 import zju.cst.aces.runner.solution_runner.ChatTesterRunner;
+import zju.cst.aces.runner.solution_runner.EvoSuiteRunner;
 import zju.cst.aces.runner.solution_runner.HITSRunner;
 import zju.cst.aces.runner.solution_runner.MUTAPRunner;
 import zju.cst.aces.util.Counter;
@@ -111,6 +112,10 @@ public class ClassRunner extends AbstractRunner {
                 break;
             case "MUTAP":
                 new MUTAPRunner(config, fullClassName, methodInfo).start();
+                break;
+            case "EVOSUITE":
+                // Bypass the LLM PhaseImpl pipeline entirely: EvoSuite is not prompt-based.
+                new EvoSuiteRunner(config, fullClassName, methodInfo).start();
                 break;
             default:
                 new MethodRunner(config, fullClassName, methodInfo).start();

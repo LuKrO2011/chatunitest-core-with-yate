@@ -223,6 +223,56 @@
             <artifactId>org.jacoco.core</artifactId>
             <version>0.8.8</version>
         </dependency>
+        <!-- JaCoCo report API: needed by MeasurementStage to serialise standard jacoco.xml -->
+        <dependency>
+            <groupId>org.jacoco</groupId>
+            <artifactId>org.jacoco.report</artifactId>
+            <version>0.8.8</version>
+        </dependency>
+
+        <!-- Mockito: generated LLM tests use it; required on the measurement/compile classpath -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>3.8.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>3.8.0</version>
+        </dependency>
+
+        <!-- EvoSuite standalone runtime: required to compile/run EvoSuite-generated JUnit 4 tests.
+             1.0.6 is the newest version published to Maven Central; it only needs to *resolve* for
+             the harness to build (the harness shells out to the EvoSuite jar and never imports these
+             classes directly). At measurement time the EvoSuite jar named by EVOSUITE_JAR provides the
+             matching org.evosuite.runtime.* classes for compiling the generated suite; if that jar's
+             runtime API diverges from 1.0.6, add its runtime jar to PIT_CLASSPATH / the measurement
+             classpath instead of bumping this coordinate (see BUILD_NOTES §5.5). -->
+        <dependency>
+            <groupId>org.evosuite</groupId>
+            <artifactId>evosuite-standalone-runtime</artifactId>
+            <version>1.0.6</version>
+        </dependency>
+
+        <!-- PIT command-line + JUnit 5 plugin: MeasurementStage shells out to MutationCoverageReport.
+             Present on the harness classpath so MeasurementSupport.pitLauncherClasspath() can reuse
+             java.class.path when PIT_CLASSPATH is unset. -->
+        <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-command-line</artifactId>
+            <version>1.15.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-entry</artifactId>
+            <version>1.15.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-junit5-plugin</artifactId>
+            <version>1.2.1</version>
+        </dependency>
 
     </dependencies>
 
@@ -294,6 +344,36 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.1.0</version>
+            </plugin>
+            <!-- Fat jar for the headless Defects4J harness. The measurement stage reuses the
+                 running JVM's java.class.path as the PIT launcher + suite-compile classpath
+                 (see MeasurementSupport / BUILD_NOTES §5.7), so the harness MUST be launched from
+                 a jar-with-dependencies that carries JaCoCo report, PIT CLI/entry/junit5, Mockito,
+                 JUnit 5 + vintage and the EvoSuite runtime. Produces
+                 target/chatunitest-core-with-yate-1.0-SNAPSHOT-jar-with-dependencies.jar. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <mainClass>zju.cst.aces.driver.Defects4jDriver</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-harness-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
