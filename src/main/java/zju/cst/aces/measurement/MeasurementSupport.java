@@ -48,6 +48,16 @@ public final class MeasurementSupport {
         if (config.getProject() != null && config.getProject().getBuildPath() != null) {
             cp.add(config.getProject().getBuildPath().toAbsolutePath().toString());
         }
+        // The real EvoSuite jar (a jar FILE) must be on the classpath so EvoSuite's EvoRunner /
+        // AgentLoader can locate and self-attach its instrumenting agent when running an
+        // EvoSuite-generated JUnit4 suite. The evosuite-runtime CLASSES merged into the harness fat
+        // jar are NOT enough (AgentLoader scans for an evosuite *jar file*, and a version match with
+        // the generator matters). Resolve it from EVOSUITE_JAR (the same jar used for generation) and
+        // place it BEFORE the harness fat jar so its classes win. Harmless for LLM (JUnit5) suites.
+        String evosuiteJar = System.getenv("EVOSUITE_JAR");
+        if (evosuiteJar != null && !evosuiteJar.isBlank()) {
+            cp.add(new File(evosuiteJar).getAbsolutePath());
+        }
         String harnessCp = System.getProperty("java.class.path");
         if (harnessCp != null) {
             String sep = System.getProperty("path.separator", ":");

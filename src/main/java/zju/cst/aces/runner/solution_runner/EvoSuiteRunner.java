@@ -85,6 +85,15 @@ public class EvoSuiteRunner extends MethodRunner {
         // Emit compilable JUnit sources only; suppress scaffolding to keep the emitted suite flat.
         command.add("-Djunit_check=false");
         command.add("-Duse_separate_classloader=false");
+        // CRITICAL for measurability: generate plain JUnit4 tests WITHOUT the EvoSuite runtime
+        // dependency (no @RunWith(EvoRunner) + self-attaching instrumentation agent). EvoRunner
+        // re-instruments the SUT bytecode at test time, which (a) fails to initialise under the
+        // JUnit-Platform vintage engine unless the EvoSuite jar is on java.class.path, and (b)
+        // wipes PIT's coverage probes in the mutation minion, yielding 0 coverage / all-NO_COVERAGE
+        // mutants. Runtime-free tests run as ordinary JUnit4 and are measured cleanly by both the
+        // in-process JaCoCo stage and PIT (validated: real coverage + 274/376 mutants killed on
+        // Lang-1 NumberUtils, matching EvoSuite's own score).
+        command.add("-Dno_runtime_dependency=true");
 
         config.getLogger().info(String.format("[%s] Running EvoSuite for class < %s >",
                 config.pluginSign, fullClassName));

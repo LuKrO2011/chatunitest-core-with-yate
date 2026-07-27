@@ -196,17 +196,15 @@ public class MeasurementStage {
         List<String> appCp = new ArrayList<>(measurementClasspath);
         appCp.add(buildPath.toAbsolutePath().toString());
         appCp.add(compiledTestsDir.toAbsolutePath().toString());
-        String sep = System.getProperty("path.separator", ":");
 
         String targetTests = testFqns.isEmpty()
                 ? packageGlob(targetClassFqn)
                 : String.join(",", testFqns);
 
         List<String> command = new ArrayList<>();
-        // Launch PIT with the SAME JVM the harness runs on (java.home), not PATH's `java`. On the
-        // Defects4J cluster image PATH points at JDK 11 (for the defects4j/EvoSuite toolchain), but
-        // the harness fat jar is Java-17 bytecode, so a JDK-11 `java` would fail the PIT launcher with
-        // UnsupportedClassVersionError. java.home is always the harness's own (17) runtime.
+        // Launch PIT with the SAME JVM the harness runs on (java.home) — JDK 11, the same runtime as
+        // Defects4J + EvoSuite. currentJavaBinary() resolves java.home so the minion JVMs PIT spawns
+        // inherit JDK 11 and can execute the EvoSuite-generated JUnit4 suite.
         command.add(currentJavaBinary());
         command.add("-cp");
         command.add(pitClasspath);
@@ -219,14 +217,27 @@ public class MeasurementStage {
         command.add(targetTests);
         command.add("--sourceDirs");
         command.add(srcRoot.toAbsolutePath().toString());
+        // PIT's --classPath is COMMA-separated (NOT the platform path separator). Joining with ':'
+        // makes PIT treat the whole classpath as one bogus element, so it finds no SUT/test classes
+        // and reports "0 mutation test units in pre scan".
         command.add("--classPath");
-        command.add(String.join(sep, appCp));
+        command.add(String.join(",", appCp));
+        // Scope mutation generation to the SUT's own compiled-classes dir. Without this PIT scans the
+        // whole --classPath (which includes the harness fat jar, itself carrying stale copies of
+        // common libraries pulled in transitively) and can mutate the wrong copy of the target class.
+        command.add("--mutableCodePaths");
+        command.add(buildPath.toAbsolutePath().toString());
         command.add("--outputFormats");
         command.add("XML");
         command.add("--timestampedReports");
         command.add("false");
         command.add("--testPlugin");
         command.add("junit5");
+        // Tolerate a non-green suite: EvoSuite occasionally emits an environment-sensitive test that
+        // fails on the unmutated code. Without this PIT aborts the whole class ("Mutation testing
+        // requires a green suite"); with it PIT drops the failing test and mutates against the rest.
+        command.add("--skipFailingTests");
+        command.add("true");
 
         config.getLogger().info(String.format("[%s] Running PIT for class < %s >",
                 config.pluginSign, targetClassFqn));

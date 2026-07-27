@@ -28,8 +28,12 @@
     </developers>
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <!-- Java 11: the whole measurement stage (in-process JaCoCo + PIT minions) runs in the
+             harness JVM, and EvoSuite-generated JUnit4 suites only execute cleanly under JDK 11
+             (JDK 17 hard-fails EvoSuite's deep reflection/agent instrumentation). So the harness
+             must be JDK-11 bytecode and run on JDK 11 (HARNESS_JAVA), same JDK as Defects4J. -->
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
     </properties>
     <dependencies>
         <!-- Yate Core -->
@@ -350,28 +354,46 @@
                  (see MeasurementSupport / BUILD_NOTES §5.7), so the harness MUST be launched from
                  a jar-with-dependencies that carries JaCoCo report, PIT CLI/entry/junit5, Mockito,
                  JUnit 5 + vintage and the EvoSuite runtime. Produces
-                 target/chatunitest-core-with-yate-1.0-SNAPSHOT-jar-with-dependencies.jar. -->
+                 target/chatunitest-core-with-yate-1.0-SNAPSHOT-jar-with-dependencies.jar.
+
+                 Shade (not assembly): PIT discovers its output listeners (XML, HTML, ...) via
+                 ServiceLoader over META-INF/services/org.pitest.mutationtest.MutationResultListenerFactory.
+                 Several PIT modules ship that same service file; maven-assembly-plugin keeps only ONE
+                 (last-wins), dropping the XML factory, so PIT dies with "Unknown listener requested in
+                 XML" when MeasurementStage requests the XML output format. shade's
+                 ServicesResourceTransformer CONCATENATES all service files, preserving every factory. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>3.6.0</version>
-                <configuration>
-                    <descriptorRefs>
-                        <descriptorRef>jar-with-dependencies</descriptorRef>
-                    </descriptorRefs>
-                    <archive>
-                        <manifest>
-                            <mainClass>zju.cst.aces.driver.Defects4jDriver</mainClass>
-                        </manifest>
-                    </archive>
-                </configuration>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
                 <executions>
                     <execution>
                         <id>make-harness-jar</id>
                         <phase>package</phase>
                         <goals>
-                            <goal>single</goal>
+                            <goal>shade</goal>
                         </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>jar-with-dependencies</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>zju.cst.aces.driver.Defects4jDriver</mainClass>
+                                </transformer>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
