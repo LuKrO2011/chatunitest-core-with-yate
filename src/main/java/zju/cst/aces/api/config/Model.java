@@ -76,6 +76,17 @@ public enum Model {
             .withTemperature(0.5)
             .withFrequencyPenalty(0)
             .withPresencePenalty(0)
+            .build()),
+    // vLLM-served Qwen3.5 (kuat2 het-job endpoint, served name "qwen35-397b").
+    // The URL here is a placeholder — the Defects4jDriver overrides it with the
+    // live endpoint via ConfigBuilder.url(LLM_BASE_URL).
+    QWEN35_397B("qwen35-397b", new ModelConfig.Builder()
+            .withModelName("qwen35-397b")
+            .withUrl(null)
+            .withContextLength(131072)
+            .withTemperature(0.5)
+            .withFrequencyPenalty(0)
+            .withPresencePenalty(0)
             .build());
 
     private final String modelName;
