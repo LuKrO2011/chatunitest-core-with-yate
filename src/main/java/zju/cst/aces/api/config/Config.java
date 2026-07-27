@@ -733,10 +733,20 @@ public class Config {
         logger.info(" YATE - Output Directory >>> " + this.getYate().outputDirectory);
         logger.info(" YATE - Config file >>> " + this.getYate().configPath);
         logger.info(" PhaseType >>> " + this.phaseType);
+        // Yate is an OPTIONAL repair layer. Its init must NOT block PromptService
+        // (which the LLM generation needs to build prompts): ConfigYate.initialize
+        // can throw a RuntimeException (e.g. a missing property -> NPE), and the
+        // original catch only handled InterruptedException|IOException, so that
+        // exception propagated out and PromptService.initialize() below never ran,
+        // leaving generation unable to prompt (0 LLM calls, empty suites).
         try {
             ConfigYate.initialize(this.getYate().configPath);
-            PromptService.initialize();
             logger.info(" YATE >>> Initialized");
+        } catch (Throwable e) {
+            logger.warn(" YATE >>> init skipped (repair disabled): " + e);
+        }
+        try {
+            PromptService.initialize();
             logger.info("\n===================================================================\n");
             Thread.sleep(1000);
         } catch (InterruptedException | IOException e) {

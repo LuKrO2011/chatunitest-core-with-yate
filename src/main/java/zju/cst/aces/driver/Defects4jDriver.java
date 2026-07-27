@@ -156,7 +156,14 @@ public class Defects4jDriver {
                     .pluginSign(toolName);
 
             if (!isEvoSuite) {
-                builder.model(model).url(baseUrl).apiKeys(new String[]{apiKey});
+                // AskGPT POSTs directly to modelConfig.getUrl() (no path appending), and the
+                // Model enum URLs are full chat-completions endpoints. LLM_BASE_URL is only the
+                // OpenAI-compatible base (e.g. http://host:8001/v1), so append /chat/completions.
+                String chatUrl = baseUrl.replaceAll("/+$", "");
+                if (!chatUrl.endsWith("/chat/completions")) {
+                    chatUrl = chatUrl + "/chat/completions";
+                }
+                builder.model(model).url(chatUrl).apiKeys(new String[]{apiKey});
             } else {
                 // EvoSuite bypasses the LLM path; a nominal model keeps ConfigBuilder happy, and
                 // merging is disabled so the EvoSuite suite is left as emitted.
