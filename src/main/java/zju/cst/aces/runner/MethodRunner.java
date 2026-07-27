@@ -80,17 +80,22 @@ public class MethodRunner extends ClassRunner {
             return true;
         }
 
-        // Validation and Repair Phase (replaced) using YATE
-        System.out.println("Trying to fix test using YATE: " + promptInfo.fullTestName);
-
-        YateFixer yateFixer = new YateFixer(config);
-
-        YateResponse yateResponse = yateFixer.fixGeneratedTest(fullClassName, classInfo, promptInfo);
-
-        // Update ChatUniTest's data structure that holds the generated test class content
-        pc.getPromptInfo().setUnitTest(yateResponse.getTestClassContainer().getCompleteContent());
-
-        exportRecord(pc.getPromptInfo(), classInfo, num);
-        return !yateResponse.getHasChanges();
+        // Repair Phase: use ChatUniTest's own LLM+rule repair (phase.repairTest), NOT the
+        // YateFixer — YateFixer.fixGeneratedTest (com.mkonst yate-java) recurses and crashes
+        // the JVM (fatal hs_err) on the headless Defects4J path, killing the whole target.
+        // This mirrors the MUTAPRunner repair loop: re-prompt with the validation error up to
+        // maxRounds and export as soon as the test compiles+passes. Only VALIDATED tests are
+        // exported, so measurement never sees an uncompilable suite.
+        for (int round = 1; round < config.getMaxRounds(); round++) {
+            promptInfo.setRound(round);
+            phase.repairTest(pc);
+            if (phase.validateTest(pc)) {
+                exportRecord(pc.getPromptInfo(), classInfo, num);
+                return true;
+            }
+        }
+        config.getLogger().info("Test for method < " + methodInfo.methodName
+                + " > did not validate after " + config.getMaxRounds() + " repair round(s)");
+        return false;
     }
 }

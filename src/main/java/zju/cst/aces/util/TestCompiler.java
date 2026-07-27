@@ -157,6 +157,13 @@ public class TestCompiler {
                 testMessage.setErrorMessage(errors);
                 promptInfo.setErrorMsg(testMessage);
 
+                // Diagnostic: surface the first few javac diagnostics to stdout so the
+                // driver log reveals WHY generated tests fail to compile (classpath vs code).
+                int shown = 0;
+                for (String err : errors) {
+                    System.out.println("COMPILE-DIAG " + testName + " >>> " + err);
+                    if (++shown >= 4) break;
+                }
                 exportError(errors, outputPath);
             }
         } catch (Exception e) {

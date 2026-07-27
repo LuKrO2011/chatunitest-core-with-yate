@@ -95,6 +95,14 @@ public final class MeasurementSupport {
         List<File> sources = new ArrayList<>();
         try (Stream<Path> walk = Files.walk(testSrcDir)) {
             walk.filter(p -> p.toString().endsWith(".java"))
+                    // Skip chatunitest's aggregator suite (<Class>_Suite.java). It uses the JUnit
+                    // Platform Suite API (org.junit.platform.runner / suite.api) which is not on the
+                    // measurement classpath, so it fails to compile — and because javac compiles the
+                    // whole batch in one task, ITS errors drop every sibling test class too (0 .class
+                    // emitted → 0 coverage, PIT skipped). The suite is only a runner convenience;
+                    // JaCoCo and PIT are driven by the individual *Test FQNs, so excluding it lets the
+                    // real test classes compile and be measured.
+                    .filter(p -> !p.getFileName().toString().endsWith("_Suite.java"))
                     .forEach(p -> {
                         sources.add(p.toFile());
                         String rel = testSrcDir.relativize(p).toString();
@@ -116,13 +124,40 @@ public final class MeasurementSupport {
             Iterable<? extends JavaFileObject> units = fileManager.getJavaFileObjectsFromFiles(sources);
             // Best-effort: some generated tests may not compile; we still return the FQNs of those
             // whose .class landed in outDir (callers tolerate missing classes at load time).
-            compiler.getTask(null, fileManager, diagnostics, options, null, units).call();
+            boolean ok = compiler.getTask(null, fileManager, diagnostics, options, null, units).call();
+            if (!ok) {
+                int shown = 0;
+                for (javax.tools.Diagnostic<? extends JavaFileObject> d : diagnostics.getDiagnostics()) {
+                    if (d.getKind() == javax.tools.Diagnostic.Kind.ERROR) {
+                        System.out.println("MEASURE-COMPILE-DIAG >>> "
+                                + (d.getSource() == null ? "?" : new File(d.getSource().getName()).getName())
+                                + ":" + d.getLineNumber() + " " + d.getMessage(null));
+                        if (++shown >= 6) {
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
-        // Keep only FQNs that actually produced a .class file.
-        return fqns.stream()
-                .filter(fqn -> new File(outDir.toFile(), fqn.replace('.', '/') + ".class").exists())
-                .collect(Collectors.toList());
+        // Derive the returned FQNs from the COMPILED .class files, not the source paths.
+        // chatunitest writes LLM test sources FLAT in testSrcDir while they declare a
+        // package, so a source-path FQN ("FooTest") doesn't match the compiled layout
+        // ("pkg/FooTest.class"); the old path-based filter dropped all of them, leaving
+        // JaCoCo (which needs explicit test FQNs) with nothing to run — 0 coverage —
+        // while PIT still found them via its package-glob fallback. Scanning outDir gives
+        // the package-correct FQNs and skips inner classes.
+        List<String> compiledFqns = new ArrayList<>();
+        try (Stream<Path> walk = Files.walk(outDir)) {
+            walk.filter(p -> p.toString().endsWith(".class"))
+                    .filter(p -> !p.getFileName().toString().contains("$"))
+                    .forEach(p -> {
+                        String rel = outDir.relativize(p).toString();
+                        rel = rel.substring(0, rel.length() - ".class".length());
+                        compiledFqns.add(rel.replace(File.separatorChar, '.'));
+                    });
+        }
+        return compiledFqns;
     }
 
     /**

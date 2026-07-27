@@ -128,19 +128,35 @@ public class MeasurementStage {
                 new CodeCoverageAnalyzer.MemoryClassLoader(urls, Thread.currentThread().getContextClassLoader());
         loader.addDefinition(targetClassFqn, instrumentedTarget);
 
-        for (String testFqn : testFqns) {
-            try {
-                Class<?> testClass = loader.loadClass(testFqn);
-                LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
-                        .selectors(DiscoverySelectors.selectClass(testClass))
-                        .build();
-                Launcher launcher = LauncherFactory.create();
-                SummaryGeneratingListener listener = new SummaryGeneratingListener();
-                launcher.registerTestExecutionListeners(listener);
-                launcher.execute(request);
-            } catch (Throwable t) {
-                config.getLogger().debug("JaCoCo: skipping test " + testFqn + " (" + t + ")");
+        // Run the suite with the instrumented MemoryClassLoader as the THREAD CONTEXT
+        // classloader. Otherwise frameworks the LLM tests use (Mockito, JUnit param
+        // resolvers, reflection) load the SUT via the context classloader — the
+        // uninstrumented copy — so JaCoCo records 0 coverage even though the tests
+        // exercise the class (PIT, which runs in its own minion, does see coverage).
+        ClassLoader prevCtx = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(loader);
+        try {
+            for (String testFqn : testFqns) {
+                try {
+                    Class<?> testClass = loader.loadClass(testFqn);
+                    LauncherDiscoveryRequest request = LauncherDiscoveryRequestBuilder.request()
+                            .selectors(DiscoverySelectors.selectClass(testClass))
+                            .build();
+                    Launcher launcher = LauncherFactory.create();
+                    SummaryGeneratingListener listener = new SummaryGeneratingListener();
+                    launcher.registerTestExecutionListeners(listener);
+                    launcher.execute(request);
+                    org.junit.platform.launcher.listeners.TestExecutionSummary s = listener.getSummary();
+                    config.getLogger().info("JaCoCo: " + testFqn + " found=" + s.getTestsFoundCount()
+                            + " started=" + s.getTestsStartedCount() + " failed=" + s.getTestsFailedCount());
+                    s.getFailures().stream().limit(1).forEach(f ->
+                            config.getLogger().warn("  JaCoCo test failure in " + testFqn + ": " + f.getException()));
+                } catch (Throwable t) {
+                    config.getLogger().warn("JaCoCo: skipping test " + testFqn + " (" + t + ")");
+                }
             }
+        } finally {
+            Thread.currentThread().setContextClassLoader(prevCtx);
         }
 
         final ExecutionDataStore executionData = new ExecutionDataStore();
@@ -192,14 +208,26 @@ public class MeasurementStage {
             return;
         }
 
+        // Never fall back to a package glob when the generated suite compiled to nothing:
+        // cp.test carries the Defects4J DEVELOPER tests for the same package, so a glob makes
+        // PIT silently measure THOSE instead of the generated suite — reporting the project's
+        // own mutation score as if it were the tool's. If there are no generated test FQNs,
+        // there is nothing of ours to measure; write an explicit empty report and stop.
+        if (testFqns.isEmpty()) {
+            config.getLogger().warn("MeasurementStage: no generated test classes compiled for "
+                    + targetClassFqn + " — skipping PIT (not falling back to the developer tests).");
+            Files.write(mutationDir.resolve("mutations.xml"),
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mutations partial=\"true\"></mutations>\n"
+                            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return;
+        }
+
         // Application classpath PIT instruments/runs against: SUT + tests + measurement deps.
         List<String> appCp = new ArrayList<>(measurementClasspath);
         appCp.add(buildPath.toAbsolutePath().toString());
         appCp.add(compiledTestsDir.toAbsolutePath().toString());
 
-        String targetTests = testFqns.isEmpty()
-                ? packageGlob(targetClassFqn)
-                : String.join(",", testFqns);
+        String targetTests = String.join(",", testFqns);
 
         List<String> command = new ArrayList<>();
         // Launch PIT with the SAME JVM the harness runs on (java.home) — JDK 11, the same runtime as

@@ -142,7 +142,22 @@ public class Defects4jDriver {
             // 4a. build headless config over the fixed checkout
             Defects4jProject d4jProject =
                     new Defects4jProject(fixedDir, srcClasses, binClassesFixed, cpTestFixed, project, String.valueOf(bug));
-            List<String> classPaths = Defects4jProject.splitClassPath(cpTestFixed);
+            // The generation-time VALIDATION compile (TestCompiler) uses exactly this classpath.
+            // Defects4J's cp.test carries the SUT classes + JUnit 4, but the harness prompts the LLM
+            // to write JUnit 5 + Mockito tests (see initial_system.ftl). Compiling those against
+            // cp.test alone fails on EVERY test ("package org.junit.jupiter / org.mockito does not
+            // exist"), so nothing ever validates or exports and measurement sees an empty suite.
+            // Append the harness's own runtime classpath (which bundles JUnit 5 + vintage + Mockito)
+            // and the EvoSuite jar, mirroring MeasurementSupport.measurementClasspath so the
+            // validation compile and the measurement compile use the same superset.
+            java.util.LinkedHashSet<String> cpSet =
+                    new java.util.LinkedHashSet<>(Defects4jProject.splitClassPath(cpTestFixed));
+            String evosuiteJar = System.getenv("EVOSUITE_JAR");
+            if (evosuiteJar != null && !evosuiteJar.isBlank()) {
+                cpSet.add(new java.io.File(evosuiteJar).getAbsolutePath());
+            }
+            cpSet.addAll(harnessClasspath());
+            List<String> classPaths = new java.util.ArrayList<>(cpSet);
 
             // Order matters: set testOutput before classPaths/validatorTargetPath so the validator
             // captures the run-scoped paths, and set model before url (url() validates the model).
@@ -152,6 +167,7 @@ public class Defects4jDriver {
                     .validatorTargetPath(runDir.resolve("validator-target"))
                     .phaseType(phaseType)
                     .stopWhenSuccess(true)
+                    .maxRounds(3)                    // repair rounds per method (default was 5)
                     .temperature(0.1)               // paper's Plain-LLM setting for these runs
                     .pluginSign(toolName);
 
@@ -163,7 +179,18 @@ public class Defects4jDriver {
                 if (!chatUrl.endsWith("/chat/completions")) {
                     chatUrl = chatUrl + "/chat/completions";
                 }
-                builder.model(model).url(chatUrl).apiKeys(new String[]{apiKey});
+                // Reasoning models (e.g. qwen35-397b) emit a long chain-of-thought in a separate
+                // "reasoning" field BEFORE the answer, so the default max_tokens=1024 runs out mid-
+                // thought (finish_reason=length) and the assistant "content" — where the code lives —
+                // comes back EMPTY, making every "extract code" fail and the whole suite empty.
+                // Give the response plenty of room. NOTE: ConfigBuilder.model() resets
+                // maxResponseTokens to 1024, so this MUST come after .model().
+                int maxResp = 32768;
+                String envMax = env("LLM_MAX_TOKENS", null);
+                if (envMax != null) {
+                    try { maxResp = Integer.parseInt(envMax.trim()); } catch (NumberFormatException ignored) { }
+                }
+                builder.model(model).url(chatUrl).apiKeys(new String[]{apiKey}).maxResponseTokens(maxResp);
             } else {
                 // EvoSuite bypasses the LLM path; a nominal model keeps ConfigBuilder happy, and
                 // merging is disabled so the EvoSuite suite is left as emitted.
@@ -188,13 +215,35 @@ public class Defects4jDriver {
                 config.getLogger().error("Generation failed for " + targetFqn + ": " + t);
             }
 
-            // 5. emit base run dir (tests, sources, manifests)
+            // diagnostic: did generation actually leave test sources where we look for them?
+            try (java.util.stream.Stream<Path> s = Files.walk(config.getTestOutput())) {
+                long n = s.filter(p -> p.toString().endsWith(".java")).count();
+                config.getLogger().info("PostGen: " + n + " test .java under " + config.getTestOutput());
+            } catch (Exception e) {
+                config.getLogger().info("PostGen: testOutput absent right after generation (" + e + ")");
+            }
+
+            // 5. uniform measurement (JaCoCo + PIT). Run this BEFORE the emit: the LLM
+            // generation finalises its suite in config.getTestOutput() asynchronously
+            // (per-method threads + TestClassMerger), so at the moment startClassTask
+            // returns the directory can still be empty. MeasurementStage's own
+            // compileTestSuite reliably sees the finished suite (PIT runs it), and it
+            // does not consume/delete config.getTestOutput(), so emitting afterwards
+            // captures the sources instead of copying an empty directory.
+            new MeasurementStage(config, runDir, targetFqn, fixedSrcRoot, fixedBin).run();
+
+            // diagnostic: how many test sources are visible at emit time
+            try (java.util.stream.Stream<Path> s = Files.walk(config.getTestOutput())) {
+                long n = s.filter(p -> p.toString().endsWith(".java")).count();
+                config.getLogger().info("Emit: " + n + " test source(s) under " + config.getTestOutput());
+            } catch (Exception e) {
+                config.getLogger().info("Emit: cannot walk testOutput (" + e + ")");
+            }
+
+            // 6. emit base run dir (tests, sources, manifests) — tests now present
             new RunDirEmitter(runDir).emit(toolName, project, String.valueOf(bug), targetFqn, configId,
                     parsed.seed, buggyCommit, fixedCommit, /*bugDiff*/ "", /*llmQueryCount*/ 0,
                     config.getTestOutput(), fixedSrcRoot);
-
-            // 6. uniform measurement (JaCoCo + PIT)
-            new MeasurementStage(config, runDir, targetFqn, fixedSrcRoot, fixedBin).run();
 
             // 7. fault detection (fixed vs buggy)
             List<String> harnessCp = harnessClasspath();
