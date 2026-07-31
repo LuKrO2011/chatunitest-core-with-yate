@@ -112,8 +112,8 @@ public class MeasurementStage {
         final IRuntime runtime = new LoggerRuntime();
         final Instrumenter instr = new Instrumenter(runtime);
 
-        // Instrument the target class bytecode from the compiled checkout.
-        byte[] instrumentedTarget = instrument(instr, targetClassFqn, buildPath);
+        // Measure the target class AND its nested classes (separate .class files).
+        List<String> measuredFqns = targetAndNestedFqns(targetClassFqn, buildPath);
 
         final RuntimeData data = new RuntimeData();
         runtime.startup(data);
@@ -126,7 +126,9 @@ public class MeasurementStage {
 
         CodeCoverageAnalyzer.MemoryClassLoader loader =
                 new CodeCoverageAnalyzer.MemoryClassLoader(urls, Thread.currentThread().getContextClassLoader());
-        loader.addDefinition(targetClassFqn, instrumentedTarget);
+        for (String fqn : measuredFqns) {
+            loader.addDefinition(fqn, instrument(instr, fqn, buildPath));
+        }
 
         // Run the suite with the instrumented MemoryClassLoader as the THREAD CONTEXT
         // classloader. Otherwise frameworks the LLM tests use (Mockito, JUnit param
@@ -168,9 +170,14 @@ public class MeasurementStage {
         // serialise standard JaCoCo report XML.
         final CoverageBuilder coverageBuilder = new CoverageBuilder();
         final Analyzer analyzer = new Analyzer(executionData, coverageBuilder);
-        File targetClassFile = classFile(targetClassFqn, buildPath);
-        try (InputStream in = new FileInputStream(targetClassFile)) {
-            analyzer.analyzeClass(in, targetClassFqn);
+        for (String fqn : measuredFqns) {
+            File cf = classFile(fqn, buildPath);
+            if (!cf.isFile()) {
+                continue;
+            }
+            try (InputStream in = new FileInputStream(cf)) {
+                analyzer.analyzeClass(in, fqn);
+            }
         }
         IBundleCoverage bundle = coverageBuilder.getBundle("chatunitest-d4j");
 
@@ -193,6 +200,36 @@ public class MeasurementStage {
 
     private static File classFile(String fqn, Path buildPath) {
         return new File(buildPath.toFile(), fqn.replace('.', '/') + ".class");
+    }
+
+    /**
+     * The target class plus every nested class (inner / static-nested / anonymous /
+     * local) compiled from the same source file. Nested classes are separate
+     * {@code Outer$Inner.class} / {@code Outer$1.class} files that JaCoCo and PIT
+     * would otherwise never see, so their source lines render as unmeasured. Returns
+     * the outer FQN first, then each {@code Outer$*} sibling under {@code buildPath},
+     * sorted for deterministic output. Matching on the {@code "Outer$"} prefix also
+     * captures deeper nesting ({@code Outer$Inner$Deeper}) and excludes unrelated
+     * siblings such as {@code OuterHelper.class}.
+     */
+    private static List<String> targetAndNestedFqns(String targetFqn, Path buildPath) {
+        List<String> fqns = new ArrayList<>();
+        fqns.add(targetFqn);
+        int dot = targetFqn.lastIndexOf('.');
+        String pkgPrefix = dot < 0 ? "" : targetFqn.substring(0, dot + 1);
+        String simple = dot < 0 ? targetFqn : targetFqn.substring(dot + 1);
+        File dir = classFile(targetFqn, buildPath).getParentFile();
+        File[] siblings = dir == null ? null : dir.listFiles();
+        if (siblings != null) {
+            java.util.Arrays.sort(siblings);
+            for (File f : siblings) {
+                String n = f.getName();
+                if (n.startsWith(simple + "$") && n.endsWith(".class")) {
+                    fqns.add(pkgPrefix + n.substring(0, n.length() - ".class".length()));
+                }
+            }
+        }
+        return fqns;
     }
 
     // --------------------------------------------------------------------- PIT
@@ -240,7 +277,7 @@ public class MeasurementStage {
         command.add("--reportDir");
         command.add(mutationDir.toAbsolutePath().toString());
         command.add("--targetClasses");
-        command.add(targetClassFqn);
+        command.add(targetClassFqn + "," + targetClassFqn + "$*");
         command.add("--targetTests");
         command.add(targetTests);
         command.add("--sourceDirs");

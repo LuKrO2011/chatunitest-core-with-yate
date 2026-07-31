@@ -156,7 +156,16 @@ public class Defects4jDriver {
             if (evosuiteJar != null && !evosuiteJar.isBlank()) {
                 cpSet.add(new java.io.File(evosuiteJar).getAbsolutePath());
             }
-            cpSet.addAll(harnessClasspath());
+            // Append the harness runtime classpath ONLY for the LLM path. EvoSuiteRunner feeds
+            // config.getClassPaths() straight into EvoSuite's -projectCP, and the harness fat jar
+            // bundles Yate's Java-17 (major 61) classes; EvoSuite 1.1.0's ASM aborts classpath
+            // analysis on any major > 55 ("Unsupported class file major version 61"), so generation
+            // yields ZERO tests. EvoSuite generation only needs the SUT + cp.test (+ the EvoSuite jar
+            // above); the measurement stage re-adds the harness runtime classpath itself via
+            // MeasurementSupport.measurementClasspath, so the generated JUnit4 suite still compiles.
+            if (!isEvoSuite) {
+                cpSet.addAll(harnessClasspath());
+            }
             List<String> classPaths = new java.util.ArrayList<>(cpSet);
 
             // Order matters: set testOutput before classPaths/validatorTargetPath so the validator
