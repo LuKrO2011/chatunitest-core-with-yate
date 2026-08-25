@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -137,6 +138,11 @@ public final class MeasurementSupport {
                         }
                     }
                 }
+                // javac emits NO class files when the batch fails — not even for the sources that
+                // were perfectly fine — so a single uncompilable generated test silently zeroes the
+                // whole target (0 coverage, PIT skipped). Recompile file by file so we keep every
+                // test that does compile and lose only the ones that genuinely don't.
+                compilePerFile(sources, outDir, classpath, compiler);
             }
         }
 
@@ -158,6 +164,38 @@ public final class MeasurementSupport {
                     });
         }
         return compiledFqns;
+    }
+
+    /**
+     * Fallback for a failed batch compile: compile each test source on its own so that one broken
+     * generated test does not cost us every other test class of the target. Sources that fail are
+     * skipped silently (the batch pass already reported representative diagnostics); whatever
+     * compiles lands in {@code outDir} and is picked up by the caller's {@code .class} scan.
+     */
+    private static void compilePerFile(List<File> sources, Path outDir, List<String> classpath,
+            JavaCompiler compiler) throws IOException {
+        String sep = System.getProperty("path.separator", ":");
+        // Put outDir on the classpath too, so a test that legitimately references a sibling test
+        // helper still resolves it once that sibling has been compiled.
+        List<String> cp = new ArrayList<>(classpath);
+        cp.add(outDir.toAbsolutePath().toString());
+        List<String> options = Arrays.asList(
+                "-classpath", String.join(sep, cp),
+                "-d", outDir.toAbsolutePath().toString());
+
+        int compiled = 0;
+        for (File source : sources) {
+            DiagnosticCollector<JavaFileObject> fileDiagnostics = new DiagnosticCollector<>();
+            try (StandardJavaFileManager fm = compiler.getStandardFileManager(fileDiagnostics, null, null)) {
+                Iterable<? extends JavaFileObject> unit =
+                        fm.getJavaFileObjectsFromFiles(Collections.singletonList(source));
+                if (compiler.getTask(null, fm, fileDiagnostics, options, null, unit).call()) {
+                    compiled++;
+                }
+            }
+        }
+        System.out.println("MEASURE-COMPILE-DIAG >>> per-file fallback compiled "
+                + compiled + "/" + sources.size() + " test source(s)");
     }
 
     /**

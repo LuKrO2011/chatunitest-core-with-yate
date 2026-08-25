@@ -11,8 +11,10 @@ import zju.cst.aces.api.config.Config;
 import zju.cst.aces.api.config.YateConfig;
 import zju.cst.aces.dto.ClassInfo;
 import zju.cst.aces.dto.PromptInfo;
+import zju.cst.aces.runner.AbstractRunner;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -141,7 +143,17 @@ public class YateFixer {
             try {
                 String sourcePath = classContainer.getPaths().getTestClass();
                 File sourceFile = new File(sourcePath);
-                String destinationName = sourceFile.getName().replace("Test", "Test_slice" + promptInfo.getSliceNum());
+                String extension = classContainer.getLang().getExtension();
+                String sourceClassName = sourceFile.getName().endsWith(extension)
+                        ? sourceFile.getName().substring(0, sourceFile.getName().length() - extension.length())
+                        : sourceFile.getName();
+                // Give the slice a class name of its own and rename the file to match: a public
+                // class in a file of a different name does not compile, and all slices of a method
+                // otherwise share one name. (The previous String.replace("Test", ...) also renamed
+                // every other "Test" occurrence in the file name.)
+                String destinationClassName =
+                        AbstractRunner.hitsSliceClassName(sourceClassName, promptInfo.getSliceNum());
+                String destinationName = destinationClassName + extension;
 
                 String directoriesAfterRepository =
                         classContainer.getPaths()
@@ -166,8 +178,12 @@ public class YateFixer {
                     targetDir.mkdirs();
                 }
 
-                // Move the file
+                // Move the file, then rename the class inside it so it matches the new file name.
                 Files.move(sourceFile.toPath(), targetFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                String content = new String(Files.readAllBytes(targetFile.toPath()), StandardCharsets.UTF_8);
+                Files.write(targetFile.toPath(),
+                        AbstractRunner.renameTestClass(content, sourceClassName, destinationClassName)
+                                .getBytes(StandardCharsets.UTF_8));
 
                 return;
             } catch (Exception e) {

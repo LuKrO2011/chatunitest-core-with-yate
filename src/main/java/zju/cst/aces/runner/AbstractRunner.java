@@ -24,6 +24,8 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public abstract class AbstractRunner {
@@ -73,6 +75,43 @@ public abstract class AbstractRunner {
         } catch (IOException e) {
             throw new RuntimeException("In AbstractRunner.exportTest: " + e);
         }
+    }
+
+    /**
+     * Class name to give the test generated for slice {@code sliceNum} of a method.
+     *
+     * <p>HITS generates one test class per method slice, and every slice carries the SAME class
+     * name ({@code <Class>_<method>_<i>_<j>_Test}). The slices are written side by side into the
+     * suite directory, so each one needs a file of its own — and a public Java class is only legal
+     * in a file matching its name. Naming the file {@code ..._Test_slice0.java} while leaving the
+     * class {@code ..._Test} makes javac reject the file with "class X is public, should be
+     * declared in a file named X.java", which (because the suite is compiled as one batch) drops
+     * EVERY test class of the target, not just the slice. Give each slice a distinct class name
+     * instead, following the convention of {@code util/hits/processNameForHITS}.
+     *
+     * <p>The {@code _Test} suffix is kept at the end so the name still matches the "…Test"
+     * heuristics used elsewhere in the pipeline.
+     */
+    public static String hitsSliceClassName(String testName, Integer sliceNum) {
+        int n = sliceNum == null ? 0 : sliceNum;
+        String base = testName.endsWith("_Test")
+                ? testName.substring(0, testName.length() - "_Test".length())
+                : testName;
+        return base + "_slice" + n + "_Test";
+    }
+
+    /**
+     * Rename the generated test class inside {@code code} so it matches the file it is written to.
+     * Replaces whole-identifier occurrences only, so the declaration, any constructor and any
+     * self-reference are all updated together.
+     */
+    public static String renameTestClass(String code, String from, String to) {
+        if (code == null || from == null || from.equals(to)) {
+            return code;
+        }
+        return Pattern.compile("\\b" + Pattern.quote(from) + "\\b")
+                .matcher(code)
+                .replaceAll(Matcher.quoteReplacement(to));
     }
 
     public String extractCode(String content) {
@@ -509,9 +548,19 @@ public abstract class AbstractRunner {
      */
     public static boolean runTest(Config config, String fullTestName, PromptInfo promptInfo, int rounds) {
         String testName = fullTestName.substring(fullTestName.lastIndexOf(".") + 1);
+        // Name the class actually written to the suite directory. Identical to testName for every
+        // tool except HITS, whose per-slice classes must each get their own name (see
+        // hitsSliceClassName). Validation below keeps using testName: the validator compiles the
+        // code under its original name in its own scratch tree, untouched by this rename.
+        String exportedTestName = testName;
         Path savePath;
         if(config.phaseType.equals("HITS")) {
-            savePath = config.getTestOutput().resolve(fullTestName.replace(".", File.separator) + "_slice" + promptInfo.getSliceNum() + ".java"); // todo 这里要加上切片序号
+            exportedTestName = hitsSliceClassName(testName, promptInfo.getSliceNum());
+            String packagePath = fullTestName.contains(".")
+                    ? fullTestName.substring(0, fullTestName.lastIndexOf(".")).replace(".", File.separator)
+                            + File.separator
+                    : "";
+            savePath = config.getTestOutput().resolve(packagePath + exportedTestName + ".java");
         } else {
             savePath = config.getTestOutput().resolve(fullTestName.replace(".", File.separator) + ".java"); // todo 这里要加上切片序号
 
@@ -535,7 +584,7 @@ public abstract class AbstractRunner {
             return false;
         }
         if (config.isNoExecution()) {
-            exportTest(code, savePath);
+            exportTest(renameTestClass(code, testName, exportedTestName), savePath);
             config.getLogger().info("Test for method < " + promptInfo.getMethodInfo().getMethodName() + " > generated successfully round " + rounds);
             return true;
         }
@@ -558,7 +607,7 @@ public abstract class AbstractRunner {
                     if (config.getValidator().semanticValidate(testProcessed, testName, compilationErrorPath, null)) {
                         compileSuccess=true;
                         if (config.getValidator().runtimeValidate(fullTestName)) {
-                            exportTest(testProcessed, savePath);
+                            exportTest(renameTestClass(testProcessed, testName, exportedTestName), savePath);
                             config.getLogger().debug("[Processed Test]:\n" + testProcessed);
                             config.getLogger().info("Processed test for method < " + promptInfo.getMethodInfo().getMethodName() + " > generated successfully round " + rounds);
                             return true;
@@ -579,7 +628,7 @@ public abstract class AbstractRunner {
         }
         summary.printTo(new PrintWriter(System.out));
         if(!config.phaseType.equals("COVERUP")){
-            exportTest(code, savePath);
+            exportTest(renameTestClass(code, testName, exportedTestName), savePath);
         }
         config.getLogger().info("Test for method < " + promptInfo.getMethodInfo().getMethodName() + " > compile and execute successfully round " + rounds);
         return true;
